@@ -49,7 +49,7 @@ brew install sqlite3
 Copy the `.env.example` file to `.env` and fill in the values.
 
 ```bash
-cp .env.example .env
+cp .env .env
 ```
 
 You'll need to update values in the `.env` file to match your configuration, but _you won't need to do anything here until the course tells you to_.
