@@ -133,7 +133,6 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	tempFile.Seek(0, io.SeekStart)
-	// TODO use processVideoForFastStart and copy the fast start version instead of the full file
 
 	processedVideoPath, err := processVideoForFastStart(tempFile.Name())
 	if err != nil {
