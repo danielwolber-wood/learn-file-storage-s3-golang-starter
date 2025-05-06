@@ -1,10 +1,15 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 	"io"
+	"mime"
 	"net/http"
+	"os"
+	"path"
 	"time"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -33,7 +38,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
 
-	// TODO: implement the upload here
 	const maxMemory = 10 << 20
 	if err := r.ParseMultipartForm(maxMemory); err != nil {
 		respondWithError(w, http.StatusBadRequest, "Could not parse multipart form", err)
@@ -52,18 +56,39 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	imageData, err = io.ReadAll(file)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Could not read thumbnail file", err)
+		return
 	}
 	data, err := cfg.db.GetVideo(videoID)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Could not get video", err)
+		return
 	}
 	if data.UserID != userID {
 		respondWithError(w, http.StatusUnauthorized, "You are not authorized to upload this thumbnail", err)
+		return
 	}
 	tb := thumbnail{data: imageData, mediaType: fileHeader.Header.Get("Content-Type")}
-	//respondWithJSON(w, http.StatusOK, struct{}{})
+	randomBits := make([]byte, 32)
+	rand.Read(randomBits)
+	randomString := base64.RawURLEncoding.EncodeToString(randomBits)
 	videoThumbnails[videoID] = tb
-	thumbnailURL := "http://localhost:8091/api/thumbnails/" + videoID.String()
+	//thumbnailURL := "http://localhost:8091/api/thumbnails/" + videoID.String()
+	extensions, err := mime.ExtensionsByType(tb.mediaType)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not get extension", err)
+		return
+	}
+	if len(extensions) == 0 {
+		respondWithError(w, http.StatusInternalServerError, "No extensions found for media type", nil)
+		return
+	}
+	thumbnailURL := "http://localhost:8091/api/thumbnails/" + randomString + extensions[0]
+	err = os.WriteFile(path.Join(cfg.assetsRoot, randomString+extensions[0]), imageData, 0644)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not upload thumbnail", err)
+		return
+	}
+
 	video := database.Video{
 		ID:                data.ID,
 		CreatedAt:         data.CreatedAt,

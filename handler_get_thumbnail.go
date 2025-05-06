@@ -1,32 +1,29 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
-
-	"github.com/google/uuid"
+	"os"
+	"path"
 )
 
 func (cfg *apiConfig) handlerThumbnailGet(w http.ResponseWriter, r *http.Request) {
-	videoIDString := r.PathValue("videoID")
-	videoID, err := uuid.Parse(videoIDString)
+	// Get the filename from the path
+	filename := r.PathValue("filename")
+
+	// Construct the full file path
+	filePath := path.Join(cfg.assetsRoot, filename)
+
+	// Check if file exists
+	_, err := os.Stat(filePath)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid video ID", err)
+		if os.IsNotExist(err) {
+			respondWithError(w, http.StatusNotFound, "Thumbnail not found", err)
+			return
+		}
+		respondWithError(w, http.StatusInternalServerError, "Error checking thumbnail", err)
 		return
 	}
 
-	tn, ok := videoThumbnails[videoID]
-	if !ok {
-		respondWithError(w, http.StatusNotFound, "Thumbnail not found", nil)
-		return
-	}
-
-	w.Header().Set("Content-Type", tn.mediaType)
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tn.data)))
-
-	_, err = w.Write(tn.data)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Error writing response", err)
-		return
-	}
+	// Serve the file
+	http.ServeFile(w, r, filePath)
 }
