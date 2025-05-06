@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -11,10 +13,47 @@ import (
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 )
+
+func getVideoAspectRatio(filePath string) (string, error) {
+	cmd := exec.Command("ffprobe", "-print_format", "json", "-show_streams", filePath)
+	buffer := bytes.NewBuffer(nil)
+	cmd.Stdout = buffer
+	err := cmd.Run()
+	if err != nil {
+		return "", err
+	}
+	//unmarshall into a JSON struct
+	type Stream struct {
+		Width  int `json:"width"`
+		Height int `json:"height"`
+	}
+	type VideoData struct {
+		Streams []Stream `json:"streams"`
+	}
+	var decodedData VideoData
+	err = json.NewDecoder(buffer).Decode(&decodedData)
+	if err != nil {
+		return "", err
+	}
+	ratio := float64(decodedData.Streams[0].Width) / float64(decodedData.Streams[0].Height)
+	epsilon := 0.01
+	ratio169 := 16.0 / 9.0
+	ratio916 := 9.01 / 16.0
+	switch {
+	case math.Abs(ratio-ratio169) < epsilon:
+		return "16:9", nil
+	case math.Abs(ratio-ratio916) < epsilon:
+		return "9:16", nil
+	default:
+		return "Other", nil
+	}
+}
 
 func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request) {
 	http.MaxBytesReader(w, r.Body, 1<<30)
@@ -90,8 +129,24 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Could not generate random bytes", err)
 		return
 	}
+	ratio, err := getVideoAspectRatio(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not get video aspect ratio", err)
+		return
+	}
+	var aspectBucket string
+	switch ratio {
+	case "16:9":
+		aspectBucket = "landscape"
+	case "9:16":
+		aspectBucket = "portrait"
+	default:
+		aspectBucket = "other"
+	}
 	hexStr := hex.EncodeToString(randomBytes)
-	uploadFilename := hexStr + ".mp4"
+	uploadFilename := aspectBucket + "/" + hexStr + ".mp4"
+	s3Url := fmt.Sprintf("https://%v.s3.%v.amazonaws.com/%v", cfg.s3Bucket, cfg.s3Region, uploadFilename)
+	fmt.Println(s3Url)
 
 	putObjectInput := &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
@@ -104,9 +159,6 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Could not upload video", err)
 		return
 	}
-
-	s3Url := fmt.Sprintf("https://%v.s3.%v.amazonaws.com/%v", cfg.s3Bucket, cfg.s3Region, uploadFilename)
-	fmt.Println(s3Url)
 
 	//video := database.Video{ID: videoID, VideoURL: &s3Url}
 	videoData.VideoURL = &s3Url
