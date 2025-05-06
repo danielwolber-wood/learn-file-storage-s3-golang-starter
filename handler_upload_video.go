@@ -133,6 +133,26 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	tempFile.Seek(0, io.SeekStart)
+	// TODO use processVideoForFastStart and copy the fast start version instead of the full file
+
+	processedVideoPath, err := processVideoForFastStart(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not process video", err)
+		return
+	}
+
+	processedVideo, err := os.Open(processedVideoPath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not create processed video file", err)
+		return
+	}
+	defer os.Remove(processedVideoPath)
+	defer processedVideo.Close()
+
+	_, err = processedVideo.Seek(0, io.SeekStart)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not seek video", err)
+	}
 
 	processedVideoPath, err := processVideoForFastStart(tempFile.Name())
 	if err != nil {
