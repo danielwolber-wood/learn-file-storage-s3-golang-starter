@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -12,7 +11,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
-	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 	"github.com/google/uuid"
 	"io"
 	"math"
@@ -20,40 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"strings"
-	"time"
 )
-
-func generatePresignedURL(s3Client *s3.Client, bucket, key string, expireTime time.Duration) (string, error) {
-	fmt.Printf("Generating Presigned URL for key %s and bucket %s\n", key, bucket)
-	presignedClient := s3.NewPresignClient(s3Client)
-	objectInput := s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)}
-	presignedRequest, err := presignedClient.PresignGetObject(context.Background(), &objectInput, s3.WithPresignExpires(expireTime))
-	//presignedRequest, err := presignedClient.PresignGetObject(context.Background(), &objectInput)
-	if err != nil {
-		return "", err
-	}
-	return presignedRequest.URL, nil
-}
-
-func (cfg *apiConfig) dbVideoToSignedVideo(video database.Video) (database.Video, error) {
-	fmt.Printf("Processing video %v\n", video)
-	if video.VideoURL == nil {
-		return video, nil
-	}
-	components := strings.Split(*video.VideoURL, ",")
-	if len(components) != 2 {
-		return video, fmt.Errorf("invalid video URL")
-	}
-	bucket := components[0]
-	key := components[1]
-	presignedURL, err := generatePresignedURL(cfg.s3Client, bucket, key, time.Hour)
-	if err != nil {
-		return database.Video{}, err
-	}
-	video.VideoURL = &presignedURL
-	return video, nil
-}
 
 func getVideoAspectRatio(filePath string) (string, error) {
 	cmd := exec.Command("ffprobe", "-print_format", "json", "-show_streams", filePath)
@@ -229,13 +194,13 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		aspectBucket = "other"
 	}
 	hexStr := hex.EncodeToString(randomBytes)
-	uploadFilename := aspectBucket + "/" + hexStr + ".mp4"
-	s3Url := fmt.Sprintf("https://%v.s3.%v.amazonaws.com/%v", cfg.s3Bucket, cfg.s3Region, uploadFilename)
-	fmt.Println(s3Url)
+	objectKey := aspectBucket + "/" + hexStr + ".mp4"
+	cloudfrontURL := fmt.Sprintf("https://%v/%v", cfg.s3CfDistribution, objectKey)
+	fmt.Println(cloudfrontURL)
 
 	putObjectInput := &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
-		Key:         &uploadFilename,
+		Key:         &objectKey,
 		Body:        processedVideo,
 		ContentType: aws.String("video/mp4"),
 	}
@@ -245,22 +210,12 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	//video := database.Video{ID: videoID, VideoURL: &s3Url}
-	//videoData.VideoURL = &s3Url
-	bucketKey := fmt.Sprintf("%v,%v", cfg.s3Bucket, uploadFilename)
-	fmt.Printf("Uploaded video %v to %v\n", uploadFilename, bucketKey)
-	videoData.VideoURL = &bucketKey
+	videoData.VideoURL = &cloudfrontURL
 	err = cfg.db.UpdateVideo(videoData)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Database error", err)
 		return
 	}
-	videoWithSignedURL, err := cfg.dbVideoToSignedVideo(videoData)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Could not generate signed URL", err)
-		return
-	}
 
-	respondWithJSON(w, http.StatusOK, videoWithSignedURL)
-	fmt.Println("Exiting handlerUploadVideo")
+	respondWithJSON(w, http.StatusOK, videoData)
 }
